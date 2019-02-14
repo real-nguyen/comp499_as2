@@ -4,7 +4,7 @@ import numpy as np
 import os
 import math
 
-THRESHOLD = 0.00026
+THRESHOLD = 0.0003
 # For SIFT descriptor
 WINDOW_SIZE = 16
 CELL_SIZE = 4
@@ -17,24 +17,19 @@ img2_orig = cv2.imread(yosemite2)
 img1 = cv2.imread(yosemite1, cv2.IMREAD_GRAYSCALE)
 img2 = cv2.imread(yosemite2, cv2.IMREAD_GRAYSCALE)
 
-Ix = cv2.Sobel(img1, cv2.CV_32F, 1, 0, ksize=3)
-Iy = cv2.Sobel(img1, cv2.CV_32F, 0, 1, ksize=3)
-Ix2 = np.matrix(Ix * Ix, dtype=np.float32)
-Iy2 = np.matrix(Iy * Iy, dtype=np.float32)
-IxIy = np.matrix(Ix * Iy, dtype=np.float32)
-
-def detectFeatures(img):
-    grayscale = cv2.cvtColor(img1_orig,cv2.COLOR_BGR2GRAY)
-    keypoints = grayscale.copy()
+def detectFeatures(img, Ix, Iy):
+    Ix2 = np.matrix(Ix * Ix, dtype=np.float32)
+    Iy2 = np.matrix(Iy * Iy, dtype=np.float32)
+    IxIy = np.matrix(Ix * Iy, dtype=np.float32)
+    keypoints = img.copy()
     keypoints[:] = 0
-    for i in range(grayscale.shape[0]):
-        for j in range(grayscale.shape[1]):
+    for i in range(img.shape[0]):
+        for j in range(img.shape[1]):
             det = Ix2[i, j] * Iy2[i, j] - (IxIy[i, j])**2
             trace = Ix2[i, j] + Iy2[i, j]
             R = det / trace if trace != 0 else 0
             if not math.isnan(R) and R > THRESHOLD:
-                keypoints[i, j] = grayscale[i, j]
-    cv2.imshow('keypoints', keypoints)
+                keypoints[i, j] = img[i, j]
     local_max = get_local_max(keypoints)
     return local_max
 
@@ -69,10 +64,11 @@ def get_keypoints(features):
                 keypoints.append(cv2.KeyPoint(x, y, 1))
     return keypoints
 
-def SIFT(img, features):
+def SIFT(img, Ix, Iy, features):
     nz = np.nonzero(features)
     feature_coords = list(zip(*nz))
     orientations = get_orientations(Ix, Iy)
+    descriptors = []
     for coord in feature_coords:
         window = get_window(orientations, coord, img.shape)
         # Window goes out of bounds; ignore this feature
@@ -80,7 +76,9 @@ def SIFT(img, features):
             continue
         cells = get_cells(window)
         descriptor = get_descriptor(cells)
-        # 5. Threshold normalize the descriptor: sum(di^2) = 1 s.t. di < 0.2
+        descriptors.append(descriptor)
+    return descriptors
+        
 
 def get_window(orientations, feature_coord, img_shape):
     # Get top left and bottom right corners of window based off of feature coordinates
@@ -179,17 +177,31 @@ def get_descriptor(cells):
                 histogram[7] += 1
         # 16 cells * 8 orientations = 128 elements total in descriptor
         descriptor += histogram[:]
-    #print(f'Descriptor: {descriptor}')
     return descriptor
 
-features = detectFeatures(img1_orig.copy())
-# Test out feature detection
-cv2.imshow('features', features)
-keypoints = get_keypoints(features)
-img1_keypoints = img1_orig.copy()
-cv2.drawKeypoints(img1_orig, keypoints, img1_keypoints)
+#def match_features(img1_features, img2_features):
+
+# Get image gradients
+img1_Ix = cv2.Sobel(img1, cv2.CV_32F, 1, 0, ksize=3)
+img1_Iy = cv2.Sobel(img1, cv2.CV_32F, 0, 1, ksize=3)
+img2_Ix = cv2.Sobel(img2, cv2.CV_32F, 1, 0, ksize=3)
+img2_Iy = cv2.Sobel(img2, cv2.CV_32F, 0, 1, ksize=3)
+
+img1_features = detectFeatures(img1.copy(), img1_Ix, img1_Iy)
+img1_keypoints = get_keypoints(img1_features)
+img1_display_keypoints = img1_orig.copy()
+cv2.drawKeypoints(img1_orig, img1_keypoints, img1_display_keypoints)
 cv2.imshow('img1_orig', img1_orig)
-cv2.imshow('img1_keypoints', img1_keypoints)
-SIFT(img1, features)
+cv2.imshow('img1_display_keypoints', img1_display_keypoints)
+img1_descriptors = SIFT(img1, img1_Ix, img1_Iy, img1_features)
+
+img2_features = detectFeatures(img2.copy(), img2_Ix, img2_Iy)
+img2_keypoints = get_keypoints(img2_features)
+img2_display_keypoints = img2_orig.copy()
+cv2.drawKeypoints(img2_orig, img2_keypoints, img2_display_keypoints)
+cv2.imshow('img2_orig', img2_orig)
+cv2.imshow('img2_display_keypoints', img2_display_keypoints)
+img2_descriptors = SIFT(img2, img2_Ix, img2_Iy, img2_features)
+
 cv2.waitKey(0)
 cv2.destroyAllWindows()
