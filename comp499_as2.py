@@ -4,7 +4,8 @@ import numpy as np
 import os
 import math
 
-THRESHOLD = 0.0003
+THRESHOLD = 0.00025
+SSD_THRESHOLD = 350
 # For SIFT descriptor
 WINDOW_SIZE = 16
 CELL_SIZE = 4
@@ -39,7 +40,6 @@ def get_local_max(img):
     local_max[:] = 0
     for i in range(img.shape[0]):        
         for j in range(img.shape[1]):
-            # TODO: Programatically construct window to adjust size
             # Construct 3x3 window around pixel (i, j)
             # If pixel is in a corner or at an edge, pad with 0's
             up_left = img[i-1, j-1] if (i > 0 and j > 0) else 0
@@ -75,7 +75,12 @@ def SIFT(img, Ix, Iy, features):
         if window is None:
             continue
         cells = get_cells(window)
-        descriptor = get_descriptor(cells)
+        # Raw descriptor
+        descriptor = get_descriptor(cells)        
+        magnitude = math.sqrt(np.sum(np.square(descriptor)))
+        # Normalized descriptor
+        # Will equal ~1 when squared and summed up
+        descriptor = [d / magnitude for d in descriptor]
         descriptors.append(descriptor)
     return descriptors
         
@@ -179,8 +184,19 @@ def get_descriptor(cells):
         descriptor += histogram[:]
     return descriptor
 
-#def match_features(img1_features, img2_features):
-
+def match_features(img1_descriptors, img2_descriptors):
+    for img1_feature in img1_descriptors:
+        distances = []
+        for img2_feature in img2_descriptors:
+            ssd = sum((np.array(img1_feature) - np.array(img2_feature))**2)
+            if ssd <= SSD_THRESHOLD:
+                distances.append(ssd)
+        if len(distances) == 0 or len(distances) == 1:
+            continue
+        distances.sort()
+        print(f'Lowest SSD for feature {img1_descriptors.index(img1_feature)}: {distances[0]}; Ratio test: {distances[0]/distances[1]}')
+        
+        
 # Get image gradients
 img1_Ix = cv2.Sobel(img1, cv2.CV_32F, 1, 0, ksize=3)
 img1_Iy = cv2.Sobel(img1, cv2.CV_32F, 0, 1, ksize=3)
@@ -189,19 +205,25 @@ img2_Iy = cv2.Sobel(img2, cv2.CV_32F, 0, 1, ksize=3)
 
 img1_features = detectFeatures(img1.copy(), img1_Ix, img1_Iy)
 img1_keypoints = get_keypoints(img1_features)
+cv2.imshow('img1_features', img1_features)
 img1_display_keypoints = img1_orig.copy()
 cv2.drawKeypoints(img1_orig, img1_keypoints, img1_display_keypoints)
 cv2.imshow('img1_orig', img1_orig)
 cv2.imshow('img1_display_keypoints', img1_display_keypoints)
 img1_descriptors = SIFT(img1, img1_Ix, img1_Iy, img1_features)
+print(f'Number of descriptors for Yosemite1.jpg: {len(img1_descriptors)}')
 
 img2_features = detectFeatures(img2.copy(), img2_Ix, img2_Iy)
 img2_keypoints = get_keypoints(img2_features)
+cv2.imshow('img2_features', img2_features)
 img2_display_keypoints = img2_orig.copy()
 cv2.drawKeypoints(img2_orig, img2_keypoints, img2_display_keypoints)
 cv2.imshow('img2_orig', img2_orig)
 cv2.imshow('img2_display_keypoints', img2_display_keypoints)
 img2_descriptors = SIFT(img2, img2_Ix, img2_Iy, img2_features)
+print(f'Number of descriptors for Yosemite2.jpg: {len(img2_descriptors)}')
+
+match_features(img1_descriptors, img2_descriptors)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
