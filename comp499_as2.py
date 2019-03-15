@@ -3,9 +3,11 @@ import cv2
 import numpy as np
 import os
 import math
+from datetime import datetime
 
-THRESHOLD = 0.00025
-SSD_THRESHOLD = 350
+THRESHOLD = 0.000255
+SSD_THRESHOLD = 0.45
+RATIO_THRESHOLD = 0.8
 # For SIFT descriptor
 WINDOW_SIZE = 16
 CELL_SIZE = 4
@@ -185,18 +187,52 @@ def get_descriptor(cells):
     return descriptor
 
 def match_features(img1_descriptors, img2_descriptors):
-    for img1_feature in img1_descriptors:
-        distances = []
-        for img2_feature in img2_descriptors:
-            ssd = sum((np.array(img1_feature) - np.array(img2_feature))**2)
-            if ssd <= SSD_THRESHOLD:
-                distances.append(ssd)
-        if len(distances) == 0 or len(distances) == 1:
-            continue
-        distances.sort()
-        print(f'Lowest SSD for feature {img1_descriptors.index(img1_feature)}: {distances[0]}; Ratio test: {distances[0]/distances[1]}')
-        
-        
+    print('Matching features...')
+    matches = []
+    with open(DIRNAME + '/data/features.txt', 'a+') as f:
+        f.write(f'Start time:\t\t{datetime.now().strftime("%H:%M:%S"):>10s}\n')
+        f.write(f'SSD_THRESHOLD:\t\t{SSD_THRESHOLD}\n')
+        f.write(f'RATIO_THRESHOLD:\t{RATIO_THRESHOLD}\n\n')
+        f.write(f'{"img1":<10s}{"img2":<10s}{"1st SSD":<15s}{"2nd SSD":<15s}{"Ratio":<15s}{"Match?":^10}\n')
+        for i in range(len(img1_descriptors)):
+            loading(i, len(img1_descriptors), matches)
+            img1_feature = img1_descriptors[i]
+            distances = []
+            for j in range(len(img2_descriptors)):
+                img2_feature = img2_descriptors[j]
+                ssd = sum((np.array(img1_feature) - np.array(img2_feature))**2)
+                if ssd <= SSD_THRESHOLD:
+                    distances.append((i,j,ssd)
+            if len(distances) == 0 or len(distances) == 1:
+                continue
+            # Sort by distance while keeping indices        
+            distances = sorted(distances, key=lambda x: x[2])
+            shortest, second_shortest = distances[0][2], distances[1][2]
+            img1_shortest_idx, img2_shortest_idx = distances[0][0], distances[0][1]
+            ratio = shortest/second_shortest
+            f.write(f'{img1_shortest_idx:<10d}{img2_shortest_idx:<10d}{shortest:<15f}{second_shortest:<15f}{ratio:<15f}')
+            if ratio < RATIO_THRESHOLD:
+                matches.append(cv2.DMatch(img1_shortest_idx, img2_shortest_idx, shortest))
+                f.write(f'{"X":^10}')
+            f.write('\n')
+        print('Done matching features.')
+        f.write(f'\nNumber of matches:\t{len(matches)}\n')
+        f.write(f'End time:\t\t\t{datetime.now().strftime("%H:%M:%S")}\n\n')
+        f.write(100 * '=')
+        f.write('\n\n')
+    return matches
+    
+def loading(i, length, matches):
+    if i == math.floor(length * 0.1): print(f'10% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.2): print(f'20% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.3): print(f'30% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.4): print(f'40% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.5): print(f'50% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.6): print(f'60% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.7): print(f'70% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.8): print(f'80% done, {len(matches)} matches...')
+    elif i == math.floor(length * 0.9): print(f'90% done, {len(matches)} matches...')
+
 # Get image gradients
 img1_Ix = cv2.Sobel(img1, cv2.CV_32F, 1, 0, ksize=3)
 img1_Iy = cv2.Sobel(img1, cv2.CV_32F, 0, 1, ksize=3)
@@ -205,25 +241,23 @@ img2_Iy = cv2.Sobel(img2, cv2.CV_32F, 0, 1, ksize=3)
 
 img1_features = detectFeatures(img1.copy(), img1_Ix, img1_Iy)
 img1_keypoints = get_keypoints(img1_features)
-cv2.imshow('img1_features', img1_features)
 img1_display_keypoints = img1_orig.copy()
 cv2.drawKeypoints(img1_orig, img1_keypoints, img1_display_keypoints)
-cv2.imshow('img1_orig', img1_orig)
 cv2.imshow('img1_display_keypoints', img1_display_keypoints)
 img1_descriptors = SIFT(img1, img1_Ix, img1_Iy, img1_features)
 print(f'Number of descriptors for Yosemite1.jpg: {len(img1_descriptors)}')
 
 img2_features = detectFeatures(img2.copy(), img2_Ix, img2_Iy)
 img2_keypoints = get_keypoints(img2_features)
-cv2.imshow('img2_features', img2_features)
 img2_display_keypoints = img2_orig.copy()
 cv2.drawKeypoints(img2_orig, img2_keypoints, img2_display_keypoints)
-cv2.imshow('img2_orig', img2_orig)
 cv2.imshow('img2_display_keypoints', img2_display_keypoints)
 img2_descriptors = SIFT(img2, img2_Ix, img2_Iy, img2_features)
 print(f'Number of descriptors for Yosemite2.jpg: {len(img2_descriptors)}')
 
-match_features(img1_descriptors, img2_descriptors)
-
+matches = match_features(img1_descriptors, img2_descriptors)
+print(f'Number of matches: {len(matches)}')
+matched_img = cv2.drawMatches(img1, img1_keypoints, img2, img2_keypoints, matches, None, flags=2)
+cv2.imshow('matched_img', matched_img)
 cv2.waitKey(0)
 cv2.destroyAllWindows()
