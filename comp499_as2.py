@@ -2,8 +2,14 @@
 import cv2
 import numpy as np
 import os
-import math
+from math import pi
+from math import sqrt
+from math import isnan
+from math import atan
+from math import floor
+# from descriptor import Descriptor
 from datetime import datetime
+from copy import deepcopy
 
 THRESHOLD = 0.000255
 SSD_THRESHOLD = 0.45
@@ -20,6 +26,47 @@ img2_orig = cv2.imread(yosemite2)
 img1 = cv2.imread(yosemite1, cv2.IMREAD_GRAYSCALE)
 img2 = cv2.imread(yosemite2, cv2.IMREAD_GRAYSCALE)
 
+class Descriptor:
+    def __init__(self):
+        self.descriptor = []
+        # Collectively summed bins from all cell histograms
+        # Used to determine descriptor's orientation
+        self.bins = np.array([0] * 8)
+        self.orientation = None
+
+    def append_histogram(self, histogram):
+        self.descriptor += histogram[:]
+
+    def add_bins(self, histogram):
+        self.bins += histogram
+
+    def set_orientation(self, max_bin_idx=None):
+        # Set orientation to lower bound of bin
+        # If max_bin_idx is not None then this descriptor is a copy of another with a different orientation
+        if max_bin_idx is None:
+            max_bin_idx = np.argmax(self.bins)
+        if max_bin_idx == 0:
+            self.orientation = 0
+        elif max_bin_idx == 1:
+            self.orientation = pi/8
+        elif max_bin_idx == 2:
+            self.orientation = pi/4
+        elif max_bin_idx == 3:
+            self.orientation = 3*pi/8
+        elif max_bin_idx == 4:
+            self.orientation = -pi/8
+        elif max_bin_idx == 5:
+            self.orientation = -pi/4
+        elif max_bin_idx == 6:
+            self.orientation = -3*pi/8
+        elif max_bin_idx == 7:
+            self.orientation = -pi/2
+
+    def normalize(self):
+        magnitude = sqrt(np.sum(np.square(self.descriptor)))
+        # Will equal ~1 when squared and summed up
+        self.descriptor = [d / magnitude for d in self.descriptor]
+
 def detectFeatures(img, Ix, Iy):
     Ix2 = np.matrix(Ix * Ix, dtype=np.float32)
     Iy2 = np.matrix(Iy * Iy, dtype=np.float32)
@@ -31,7 +78,7 @@ def detectFeatures(img, Ix, Iy):
             det = Ix2[i, j] * Iy2[i, j] - (IxIy[i, j])**2
             trace = Ix2[i, j] + Iy2[i, j]
             R = det / trace if trace != 0 else 0
-            if not math.isnan(R) and R > THRESHOLD:
+            if not isnan(R) and R > THRESHOLD:
                 keypoints[i, j] = img[i, j]
     local_max = get_local_max(keypoints)
     return local_max
@@ -77,12 +124,12 @@ def SIFT(img, Ix, Iy, features):
         if window is None:
             continue
         cells = get_cells(window)
-        # Raw descriptor
-        descriptor = get_descriptor(cells)        
-        magnitude = math.sqrt(np.sum(np.square(descriptor)))
-        # Normalized descriptor
-        # Will equal ~1 when squared and summed up
-        descriptor = [d / magnitude for d in descriptor]
+        # TODO: Rotational invariance
+        # Assign orientation to descriptor corresponding to bin with most votes
+        # Create new descriptors for every orientation that is [80%, 100%) of max vote, if any
+        descriptor = get_descriptor(cells)
+        descriptor.normalize()
+        descriptor.set_orientation()
         descriptors.append(descriptor)
     return descriptors
         
@@ -155,16 +202,15 @@ def get_orientations(Ix, Iy):
     for row in range(Ix.shape[0]):
         for col in range(Ix.shape[1]):
             # arctan goes from -pi/2 to pi/2 rads (-90 to 90 degrees)
-            orientations[row, col] = math.atan(Iy[row,col] / Ix[row,col]) if Ix[row,col] != 0 else 0
+            orientations[row, col] = atan(Iy[row,col] / Ix[row,col]) if Ix[row,col] != 0 else 0
     return orientations
 
 def get_descriptor(cells):
-    descriptor = []
+    descriptor = Descriptor()
     for cell in cells:
         # Array with fixed size 8
         histogram = [0] * 8
         cell_flat = [item for row in cell for item in row]
-        pi = math.pi
         for orientation in cell_flat:
             if 0 <= orientation < pi/8:
                 histogram[0] += 1
@@ -182,15 +228,16 @@ def get_descriptor(cells):
                 histogram[6] += 1
             elif -pi/2 < orientation < -3*pi/8:
                 histogram[7] += 1
-        # 16 cells * 8 orientations = 128 elements total in descriptor
-        descriptor += histogram[:]
+        descriptor.append_histogram(histogram)
+        descriptor.add_bins(histogram)
     return descriptor
 
 def match_features(img1_descriptors, img2_descriptors):
+    # TODO: Adapt to object-based Descriptor
     print('Matching features...')
     matches = []
     with open(DIRNAME + '/data/features.txt', 'a+') as f:
-        f.write(f'Start time:\t\t{datetime.now().strftime("%H:%M:%S"):>10s}\n')
+        f.write(f'Start time:\t\t{datetime.now().strftime("%H:%M:%S")}\n')
         f.write(f'SSD_THRESHOLD:\t\t{SSD_THRESHOLD}\n')
         f.write(f'RATIO_THRESHOLD:\t{RATIO_THRESHOLD}\n\n')
         f.write(f'{"img1":<10s}{"img2":<10s}{"1st SSD":<15s}{"2nd SSD":<15s}{"Ratio":<15s}{"Match?":^10}\n')
@@ -202,7 +249,7 @@ def match_features(img1_descriptors, img2_descriptors):
                 img2_feature = img2_descriptors[j]
                 ssd = sum((np.array(img1_feature) - np.array(img2_feature))**2)
                 if ssd <= SSD_THRESHOLD:
-                    distances.append((i,j,ssd)
+                    distances.append((i,j,ssd))
             if len(distances) == 0 or len(distances) == 1:
                 continue
             # Sort by distance while keeping indices        
@@ -223,15 +270,15 @@ def match_features(img1_descriptors, img2_descriptors):
     return matches
     
 def loading(i, length, matches):
-    if i == math.floor(length * 0.1): print(f'10% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.2): print(f'20% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.3): print(f'30% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.4): print(f'40% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.5): print(f'50% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.6): print(f'60% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.7): print(f'70% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.8): print(f'80% done, {len(matches)} matches...')
-    elif i == math.floor(length * 0.9): print(f'90% done, {len(matches)} matches...')
+    if i == floor(length * 0.1): print(f'10% done, {len(matches)} matches...')
+    elif i == floor(length * 0.2): print(f'20% done, {len(matches)} matches...')
+    elif i == floor(length * 0.3): print(f'30% done, {len(matches)} matches...')
+    elif i == floor(length * 0.4): print(f'40% done, {len(matches)} matches...')
+    elif i == floor(length * 0.5): print(f'50% done, {len(matches)} matches...')
+    elif i == floor(length * 0.6): print(f'60% done, {len(matches)} matches...')
+    elif i == floor(length * 0.7): print(f'70% done, {len(matches)} matches...')
+    elif i == floor(length * 0.8): print(f'80% done, {len(matches)} matches...')
+    elif i == floor(length * 0.9): print(f'90% done, {len(matches)} matches...')
 
 # Get image gradients
 img1_Ix = cv2.Sobel(img1, cv2.CV_32F, 1, 0, ksize=3)
